@@ -99,12 +99,54 @@ def segment_mcrf(ws, affs, n_labels, offsets, rf, return_nodes=False):
 
 
 def segment_lmc(ws, affs, n_labels, offsets, return_nodes=False):
-    pass
+    rag = nrag.gridRag(ws, numberOfLabels=n_labels, numberOfThreads=1)
+    lifted_uvs, local_features, lifted_features = nrag.computeFeaturesAndNhFromAffinities(rag,
+                                                                                          affs,
+                                                                                          offsets,
+                                                                                          numberOfThreads=1)
+    lmc = cseg.LiftedMulticut('kernighan-lin', weight_edges=False)
+    uv_ids = rag.uvIds()
+
+    local_costs = lmc.probabilities_to_costs(local_features[:, 0])
+    local_ignore = (uv_ids == 0).any(axis=1)
+    local_costs[local_ignore] = 5 * local_costs.min()
+
+    lifted_costs = lmc.probabilities_to_costs(lifted_features[:, 0])
+    lifted_ignore = (lifted_uvs == 0).any(axis=1)
+    lifted_costs[lifted_ignore] = 5 * lifted_costs.min()
+
+    node_labels = lmc(uv_ids, lifted_uvs, local_costs, lifted_costs)
+
+    if return_nodes:
+        return node_labels
+    else:
+        return nrag.projectScalarNodeDataToPixels(rag, node_labels)
 
 
 # TODO also try with single rf learned from both features
 def segment_lmcrf(ws, affs, n_labels, offsets, rf_local, rf_lifted, return_nodes=False):
-    pass
+    rag = nrag.gridRag(ws, numberOfLabels=n_labels, numberOfThreads=1)
+    lifted_uvs, local_features, lifted_features = nrag.computeFeaturesAndNhFromAffinities(rag,
+                                                                                          affs,
+                                                                                          offsets,
+                                                                                          numberOfThreads=1)
+    lmc = cseg.LiftedMulticut('kernighan-lin', weight_edges=False)
+    uv_ids = rag.uvIds()
+
+    local_costs = lmc.probabilities_to_costs(rf_local.predict_proba(local_features)[:, 1])
+    local_ignore = (uv_ids == 0).any(axis=1)
+    local_costs[local_ignore] = 5 * local_costs.min()
+
+    lifted_costs = lmc.probabilities_to_costs(rf_lifted.predict_proba(lifted_features)[:, 1])
+    lifted_ignore = (lifted_uvs == 0).any(axis=1)
+    lifted_costs[lifted_ignore] = 5 * lifted_costs.min()
+
+    node_labels = lmc(uv_ids, lifted_uvs, local_costs, lifted_costs)
+
+    if return_nodes:
+        return node_labels
+    else:
+        return nrag.projectScalarNodeDataToPixels(rag, node_labels)
 
 
 def run_segmentation(block_id, segmenter, key, n_threads=60):
@@ -113,8 +155,8 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
 
     chunk_shape = (25, 256, 256)
     # TODO maybe use 1k blocks (factor 4) ?!
-    block_shape = tuple(cs * 2 for cs in chunk_shape)
-    halo = [5, 50, 50]
+    block_shape = tuple(cs * 4 for cs in chunk_shape)
+    halo = [10, 100, 100]
 
     shape = f['gray'].shape
     blocking = nifty.tools.blocking(roiBegin=[0, 0, 0],
@@ -145,9 +187,10 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
         json.dump(times, ft)
 
     offsets = np.array([res[0] for res in results], dtype='uint64')
-    offsets = np.roll(offsets, 1)
-    offsets[0] = 0
-    offsets = np.cumsum(offsets)
+    # we don;t do this just jet
+    # offsets = np.roll(offsets, 1)
+    # offsets[0] = 0
+    # offsets = np.cumsum(offsets)
     with open('./block_offsets_0%i_%s.json' % (block_id, key), 'w') as ft:
         json.dump(offsets, ft)
 
@@ -207,6 +250,8 @@ def segmenter_factory(algo, feats, return_nodes=False):
 
 if __name__ == '__main__':
     block_id = 2
-    key, segmenter = segmenter_factory('mc', 'rf')
-    n_threads = 60
-    run_segmentation(block_id, segmenter, key, n_threads)
+    algo = 'mc'
+    for feat in ('rf', 'local'):
+        key, segmenter = segmenter_factory(algo, feat)
+        n_threads = 60
+        run_segmentation(block_id, segmenter, key, n_threads)
