@@ -1,3 +1,4 @@
+import os
 import json
 import pickle
 import time
@@ -69,8 +70,21 @@ def segment_mc(ws, affs, n_labels, offsets):
     return nrag.projectScalarNodeDataToPixels(rag, node_labels)
 
 
-def segment_mcrf(ws, affs, offsets, rf):
-    pass
+def segment_mcrf(ws, affs, n_labels, offsets, rf):
+    rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
+    feats = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)
+    probs = rf.predict_proba(feats)
+    uv_ids = rag.uvIds()
+
+    mc = cseg.Multicut('kernighan-lin', weight_edges=False)
+    costs = mc.probabilities_to_costs(probs)
+    ignore_edges = (uv_ids == 0).any(axis=1)
+    costs[ignore_edges] = 5 * costs.min()
+
+    graph = nifty.graph.undirectedGraph(n_labels)
+    graph.insertEdges(uv_ids)
+    node_labels = mc(graph, costs)
+    return nrag.projectScalarNodeDataToPixels(rag, node_labels)
 
 
 def segment_lmc(ws, affs, offsets):
@@ -101,12 +115,21 @@ if __name__ == '__main__':
                [-2, 0, 0], [0, -3, 0], [0, 0, -3],
                [-3, 0, 0], [0, -9, 0], [0, 0, -9],
                [-4, 0, 0], [0, -27, 0], [0, 0, -27]]
-    segmenter = partial(segment_mc, offsets=offsets)
-    n_threads = 60
+
+    rf_folder = '/groups/saalfeld/home/papec/Work/neurodata_hdd/cremi_warped/random_forests'
+
+    # affinity based mc
+    # segmenter = partial(segment_mc, offsets=offsets)
+
+    # rf based mc
+    with open(os.path.join(rf_folder, 'rf_ABC_local_affinity_feats.pkl'), 'rb') as fr:
+        rf = pickle.load(fr)
+    rf.n_jobs = 1
+    segmenter = partial(segment_mcrf, offsets=offsets, rf=rf)
 
     group = 'segmentations'
     # CHANGE FOR DIFFERENT SEGMENTERS
-    key = 'mc_affs_not_stitched'
+    key = 'mc_rf_not_stitched'
     if group not in f:
         f.create_group(group)
 
@@ -115,6 +138,7 @@ if __name__ == '__main__':
         f.create_dataset(out_key, shape=shape, chunks=chunk_shape,
                          compression='gzip', dtype='uint64')
 
+    n_threads = 60
     t0 = time.time()
     with futures.ThreadPoolExecutor(n_threads) as tp:
         tasks = [tp.submit(segment_block, path, out_key, blocking, block_id, halo, segmenter)
