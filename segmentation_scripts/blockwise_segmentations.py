@@ -152,7 +152,7 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
         json.dump(offsets, ft)
 
 
-def segmenter_factory(algo, feats):
+def segmenter_factory(algo, feats, return_nodes=False):
     rf_folder = '/groups/saalfeld/home/papec/Work/neurodata_hdd/cremi_warped/random_forests'
     offsets = [[-1, 0, 0], [0, -1, 0], [0, 0, -1],
                [-2, 0, 0], [0, -3, 0], [0, 0, -3],
@@ -164,7 +164,7 @@ def segmenter_factory(algo, feats):
         if feats == 'local':
             # affinity based mc
             key = 'mc_affs_not_stitched'
-            segmenter = partial(segment_mc, offsets=offsets)
+            segmenter = partial(segment_mc, offsets=offsets, return_nodes=return_nodes)
 
         elif feats == 'rf':
             # rf based mc
@@ -172,7 +172,7 @@ def segmenter_factory(algo, feats):
                 rf = pickle.load(fr)
             rf.n_jobs = 1
             key = 'mc_rf_not_stitched'
-            segmenter = partial(segment_mcrf, offsets=offsets, rf=rf)
+            segmenter = partial(segment_mcrf, offsets=offsets, rf=rf, return_nodes=return_nodes)
 
         else:
             raise AttributeError("No!")
@@ -182,7 +182,7 @@ def segmenter_factory(algo, feats):
         if feats == 'local':
             # affinity based lmc
             key = 'lmc_affs_not_stitched'
-            segmenter = partial(segment_lmc, offsets=offsets)
+            segmenter = partial(segment_lmc, offsets=offsets, return_nodes=return_nodes)
 
         elif feats == 'rf':
             # rf based lmc
@@ -194,7 +194,8 @@ def segmenter_factory(algo, feats):
             rf2.n_jobs = 1
 
             key = 'lmc_rf_not_stitched'
-            segmenter = partial(segment_lmcrf, offsets=offsets, rf_local=rf1, rf_lifted=rf2)
+            segmenter = partial(segment_lmcrf, offsets=offsets,
+                                rf_local=rf1, rf_lifted=rf2, return_nodes=return_nodes)
 
         else:
             raise AttributeError("No!")

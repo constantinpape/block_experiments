@@ -1,8 +1,9 @@
 import os
 import sys
 import numpy as np
-sys.path.append('/home/papec/Work/my_projects/cremi_tools')
-sys.path.append('/home/papec/Work/my_projects/z5/bld/python')
+# sys.path.append('/home/papec/Work/my_projects/cremi_tools')
+# sys.path.append('/home/papec/Work/my_projects/z5/bld/python')
+sys.path.append('/groups/saalfeld/home/papec/Work/my_projects/cremi_tools')
 
 
 def intersect_skeletons_with_bb(skeletons, bb):
@@ -35,7 +36,8 @@ def intersect_skeletons_with_bb(skeletons, bb):
 
 def extract_skeletons(block_id):
     from cremi_tools.skeletons import SkeletonParserCSV
-    path = '/home/papec/mnt/nrs/lauritzen/0%i/workspace.n5/skeletons/skeletons-0%i.csv' % (block_id, block_id)
+    # path = '/home/papec/mnt/nrs/lauritzen/0%i/workspace.n5/skeletons/skeletons-0%i.csv' % (block_id, block_id)
+    path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/skeletons/skeletons-0%i.csv' % (block_id, block_id)
     assert os.path.exists(path)
     # TODO correct resolution and offsets ?!
     resolution = (4, 4, 40)
@@ -45,7 +47,7 @@ def extract_skeletons(block_id):
                                invert_coordinates=True)
     skeleton_dict = parser.parse(path)
     skel_ids = np.array(skeleton_dict['skeleton_ids'], dtype='uint64')
-    node_ids = np.array(skeleton_dict['node_ids'], dtype='int64')
+    node_ids = np.array(skeleton_dict['node_ids'], dtype='uint64')
     parents = np.array(skeleton_dict['parents'], dtype='int64')
     coords = np.array(skeleton_dict['coordinates'], dtype='int64')
     names = skeleton_dict['names']
@@ -63,7 +65,8 @@ def extract_skeletons(block_id):
 
         nodes = node_ids[sk_mask]
         parents = node_ids[sk_mask]
-        edges = np.concatenate([nodes[:, None], parents[:, None]], axis=1)
+        edges = np.concatenate([nodes[:, None].astype('int64'),
+                                parents[:, None]], axis=1)
         extracted['node_ids'] = nodes
         extracted['edges'] = edges
 
@@ -73,7 +76,30 @@ def extract_skeletons(block_id):
 
 # TODO serialize the skeletons properly to n5
 def save_skeletons(block_id):
-    pass
+    import z5py
+    # path = '/home/papec/mnt/nrs/lauritzen/0%i/workspace.n5/skeletons' % block_id
+    path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/skeletons' % block_id
+    f = z5py.File(path)
+
+    skeletons = extract_skeletons(block_id)
+    for skel_id, values in skeletons.items():
+        g = f.create_group(str(skel_id))
+        # we prepend the nodes to the coordinates
+        nodes = values['node_ids']
+        coords = values['coordinates']
+        coords = np.concatenate([nodes[:, None], coords], axis=1)
+        dsc = g.create_dataset('coordinates', shape=coords.shape,
+                               chunks=coords.shape, dtype='uint64',
+                               compression='raw')
+        dsc[:] = coords.astype('uint64')
+        # save the edges
+        edges = values['edges']
+        dse = g.create_dataset('edges', shape=edges.shape,
+                               chunks=edges.shape, dtype='int64',
+                               compression='raw')
+        dse[:] = edges.astype('int64')
+        # save the name as attribute
+        g.attrs['name'] = values['name']
 
 
 def view_skeletons(block_id):
