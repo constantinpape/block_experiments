@@ -30,7 +30,7 @@ def segment_block(path, out_key, blocking, block_id, halo, segmenter):
                      for start, stop in zip(block.innerBlockLocal.begin, block.innerBlockLocal.end))
 
     # load mask
-    mask = f['masks/min_filter_mask'][bb]
+    mask = f['masks/min_filter_mask'][bb].astype('bool')
     # if we only have mask, continue
     if np.sum(mask) == 0:
         print("Finished", block_id, "; contained only mask")
@@ -52,7 +52,7 @@ def segment_block(path, out_key, blocking, block_id, halo, segmenter):
 
     segmentation = segmentation[local_bb].astype('uint64')
     segmentation, max_id, _ = vigra.analysis.relabelConsecutive(segmentation, start_label=1)
-    segmentation[mask] = 0
+    segmentation[np.logical_not(mask[local_bb])] = 0
 
     ds_out[inner_bb] = segmentation
     print("Finished", block_id)
@@ -104,18 +104,25 @@ def segment_lmc(ws, affs, n_labels, offsets, return_nodes=False):
                                                                                           affs,
                                                                                           offsets,
                                                                                           numberOfThreads=1)
-    lmc = cseg.LiftedMulticut('kernighan-lin', weight_edges=False)
     uv_ids = rag.uvIds()
 
+    lmc = cseg.LiftedMulticut('kernighan-lin', weight_edges=False)
     local_costs = lmc.probabilities_to_costs(local_features[:, 0])
     local_ignore = (uv_ids == 0).any(axis=1)
     local_costs[local_ignore] = 5 * local_costs.min()
 
-    lifted_costs = lmc.probabilities_to_costs(lifted_features[:, 0])
-    lifted_ignore = (lifted_uvs == 0).any(axis=1)
-    lifted_costs[lifted_ignore] = 5 * lifted_costs.min()
+    # we might not have lifted edges -> just solve multicut
+    if len(lifted_uvs) == 1 and (lifted_uvs[0] == -1).any():
+        mc = cseg.Multicut('kernighan-lin', weight_edges=False)
+        graph = nifty.graph.undirectedGraph(n_labels)
+        graph.insertEdges(uv_ids)
+        node_labels = mc(graph, local_costs)
 
-    node_labels = lmc(uv_ids, lifted_uvs, local_costs, lifted_costs)
+    else:
+        lifted_costs = lmc.probabilities_to_costs(lifted_features[:, 0])
+        lifted_ignore = (lifted_uvs == 0).any(axis=1)
+        lifted_costs[lifted_ignore] = 5 * lifted_costs.min()
+        node_labels = lmc(uv_ids, lifted_uvs, local_costs, lifted_costs)
 
     if return_nodes:
         return node_labels
@@ -137,11 +144,18 @@ def segment_lmcrf(ws, affs, n_labels, offsets, rf_local, rf_lifted, return_nodes
     local_ignore = (uv_ids == 0).any(axis=1)
     local_costs[local_ignore] = 5 * local_costs.min()
 
-    lifted_costs = lmc.probabilities_to_costs(rf_lifted.predict_proba(lifted_features)[:, 1])
-    lifted_ignore = (lifted_uvs == 0).any(axis=1)
-    lifted_costs[lifted_ignore] = 5 * lifted_costs.min()
+    # we might not have lifted edges -> just solve multicut
+    if len(lifted_uvs) == 1 and (lifted_uvs[0] == -1).any():
+        mc = cseg.Multicut('kernighan-lin', weight_edges=False)
+        graph = nifty.graph.undirectedGraph(n_labels)
+        graph.insertEdges(uv_ids)
+        node_labels = mc(graph, local_costs)
 
-    node_labels = lmc(uv_ids, lifted_uvs, local_costs, lifted_costs)
+    else:
+        lifted_costs = lmc.probabilities_to_costs(rf_lifted.predict_proba(lifted_features)[:, 1])
+        lifted_ignore = (lifted_uvs == 0).any(axis=1)
+        lifted_costs[lifted_ignore] = 5 * lifted_costs.min()
+        node_labels = lmc(uv_ids, lifted_uvs, local_costs, lifted_costs)
 
     if return_nodes:
         return node_labels
@@ -155,8 +169,8 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
 
     chunk_shape = (25, 256, 256)
     # TODO maybe use 1k blocks (factor 4) ?!
-    block_shape = tuple(cs * 4 for cs in chunk_shape)
-    halo = [10, 100, 100]
+    block_shape = tuple(cs * 2 for cs in chunk_shape)
+    halo = [5, 50, 50]
 
     shape = f['gray'].shape
     blocking = nifty.tools.blocking(roiBegin=[0, 0, 0],
@@ -171,6 +185,7 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
     if out_key not in f:
         f.create_dataset(out_key, shape=shape, chunks=chunk_shape,
                          compression='gzip', dtype='uint64')
+        f.attrs['blocking'] = block_shape
 
     t0 = time.time()
     with futures.ThreadPoolExecutor(n_threads) as tp:
@@ -178,7 +193,7 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
                  for block_id in range(blocking.numberOfBlocks)]
         results = [t.result() for t in tasks]
     # block_times = [segment_block(path, out_key, blocking, block_id, halo, segmenter)
-    #                for block_id in range(blocking.numberOfBlocks)]
+    #                for block_id in [34]]  # range(blocking.numberOfBlocks)]
     t_tot = time.time() - t0
     print("Total processing time:", t_tot)
 
@@ -186,7 +201,7 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
     with open('./timings_0%i_%s.json' % (block_id, key), 'w') as ft:
         json.dump(times, ft)
 
-    offsets = np.array([res[0] for res in results], dtype='uint64')
+    offsets = [res[0] for res in results]
     # we don;t do this just jet
     # offsets = np.roll(offsets, 1)
     # offsets[0] = 0
@@ -250,8 +265,8 @@ def segmenter_factory(algo, feats, return_nodes=False):
 
 if __name__ == '__main__':
     block_id = 2
-    algo = 'mc'
-    for feat in ('rf', 'local'):
+    algo = 'lmc'
+    for feat in ('local', 'rf'):
         key, segmenter = segmenter_factory(algo, feat)
         n_threads = 60
         run_segmentation(block_id, segmenter, key, n_threads)
