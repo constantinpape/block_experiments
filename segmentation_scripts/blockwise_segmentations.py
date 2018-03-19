@@ -59,7 +59,7 @@ def segment_block(path, out_key, blocking, block_id, halo, segmenter):
     return max_id, time.time() - t0
 
 
-def segment_mc(ws, affs, n_labels, offsets, return_nodes=False):
+def segment_mc(ws, affs, n_labels, offsets, return_merged_nodes=False):
     rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
     probs = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)[:, 0]
     uv_ids = rag.uvIds()
@@ -72,13 +72,17 @@ def segment_mc(ws, affs, n_labels, offsets, return_nodes=False):
     graph = nifty.graph.undirectedGraph(n_labels)
     graph.insertEdges(uv_ids)
     node_labels = mc(graph, costs)
-    if return_nodes:
-        return node_labels
+
+    # relabel the node labels consecutively and make sure that zero
+    # is still mapped to zero
+
+    if return_merged_nodes:
+        return get_merged_nodes(uv_ids, node_labels)
     else:
         return nrag.projectScalarNodeDataToPixels(rag, node_labels)
 
 
-def segment_mcrf(ws, affs, n_labels, offsets, rf, return_nodes=False):
+def segment_mcrf(ws, affs, n_labels, offsets, rf, return_merged_nodes=False):
     rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
     feats = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)
     probs = rf.predict_proba(feats)[:, 1]
@@ -92,14 +96,14 @@ def segment_mcrf(ws, affs, n_labels, offsets, rf, return_nodes=False):
     graph = nifty.graph.undirectedGraph(n_labels)
     graph.insertEdges(uv_ids)
     node_labels = mc(graph, costs)
-    if return_nodes:
-        return node_labels
+    if return_merged_nodes:
+        return get_merged_nodes(uv_ids, node_labels)
     else:
         return nrag.projectScalarNodeDataToPixels(rag, node_labels)
 
 
 # FIXME something doesn't lift the gil ?!
-def segment_lmc(ws, affs, n_labels, offsets, return_nodes=False):
+def segment_lmc(ws, affs, n_labels, offsets, return_merged_nodes=False):
     rag = nrag.gridRag(ws, numberOfLabels=n_labels, numberOfThreads=1)
     lifted_uvs, local_features, lifted_features = nrag.computeFeaturesAndNhFromAffinities(rag,
                                                                                           affs,
@@ -125,14 +129,14 @@ def segment_lmc(ws, affs, n_labels, offsets, return_nodes=False):
         lifted_costs[lifted_ignore] = 5 * lifted_costs.min()
         node_labels = lmc(uv_ids, lifted_uvs, local_costs, lifted_costs)
 
-    if return_nodes:
-        return node_labels
+    if return_merged_nodes:
+        return get_merged_nodes(uv_ids, node_labels)
     else:
         return nrag.projectScalarNodeDataToPixels(rag, node_labels)
 
 
 # TODO also try with single rf learned from both features
-def segment_lmcrf(ws, affs, n_labels, offsets, rf_local, rf_lifted, return_nodes=False):
+def segment_lmcrf(ws, affs, n_labels, offsets, rf_local, rf_lifted, return_merged_nodes=False):
     rag = nrag.gridRag(ws, numberOfLabels=n_labels, numberOfThreads=1)
     lifted_uvs, local_features, lifted_features = nrag.computeFeaturesAndNhFromAffinities(rag,
                                                                                           affs,
@@ -158,10 +162,15 @@ def segment_lmcrf(ws, affs, n_labels, offsets, rf_local, rf_lifted, return_nodes
         lifted_costs[lifted_ignore] = 5 * lifted_costs.min()
         node_labels = lmc(uv_ids, lifted_uvs, local_costs, lifted_costs)
 
-    if return_nodes:
-        return node_labels
+    if return_merged_nodes:
+        return get_merged_nodes(uv_ids, node_labels)
     else:
         return nrag.projectScalarNodeDataToPixels(rag, node_labels)
+
+
+def get_merged_nodes(uv_ids, node_labels):
+    merge_edges = node_labels[uv_ids[:, 0]] == node_labels[uv_ids[:, 1]]
+    return uv_ids[merge_edges]
 
 
 def run_segmentation(block_id, segmenter, key, n_threads=60):
@@ -203,7 +212,7 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
         json.dump(times, ft)
 
     offsets = [res[0] for res in results]
-    # we don;t do this just jet
+    # we don't do this just yet
     # offsets = np.roll(offsets, 1)
     # offsets[0] = 0
     # offsets = np.cumsum(offsets)
@@ -211,7 +220,7 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
         json.dump(offsets, ft)
 
 
-def segmenter_factory(algo, feats, return_nodes=False):
+def segmenter_factory(algo, feats, return_merged_nodes=False):
     rf_folder = '/groups/saalfeld/home/papec/Work/neurodata_hdd/cremi_warped/random_forests'
     offsets = [[-1, 0, 0], [0, -1, 0], [0, 0, -1],
                [-2, 0, 0], [0, -3, 0], [0, 0, -3],
@@ -223,7 +232,7 @@ def segmenter_factory(algo, feats, return_nodes=False):
         if feats == 'local':
             # affinity based mc
             key = 'mc_affs_not_stitched'
-            segmenter = partial(segment_mc, offsets=offsets, return_nodes=return_nodes)
+            segmenter = partial(segment_mc, offsets=offsets, return_merged_nodes=return_merged_nodes)
 
         elif feats == 'rf':
             # rf based mc
@@ -231,7 +240,7 @@ def segmenter_factory(algo, feats, return_nodes=False):
                 rf = pickle.load(fr)
             rf.n_jobs = 1
             key = 'mc_rf_not_stitched'
-            segmenter = partial(segment_mcrf, offsets=offsets, rf=rf, return_nodes=return_nodes)
+            segmenter = partial(segment_mcrf, offsets=offsets, rf=rf, return_merged_nodes=return_merged_nodes)
 
         else:
             raise AttributeError("No!")
@@ -241,7 +250,7 @@ def segmenter_factory(algo, feats, return_nodes=False):
         if feats == 'local':
             # affinity based lmc
             key = 'lmc_affs_not_stitched'
-            segmenter = partial(segment_lmc, offsets=offsets, return_nodes=return_nodes)
+            segmenter = partial(segment_lmc, offsets=offsets, return_merged_nodes=return_merged_nodes)
 
         elif feats == 'rf':
             # rf based lmc
@@ -254,7 +263,7 @@ def segmenter_factory(algo, feats, return_nodes=False):
 
             key = 'lmc_rf_not_stitched'
             segmenter = partial(segment_lmcrf, offsets=offsets,
-                                rf_local=rf1, rf_lifted=rf2, return_nodes=return_nodes)
+                                rf_local=rf1, rf_lifted=rf2, return_merged_nodes=return_merged_nodes)
 
         else:
             raise AttributeError("No!")
