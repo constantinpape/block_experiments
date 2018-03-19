@@ -84,6 +84,7 @@ def stitch_block_neighbors(ds_seg, ds_affs, blocking, block_id, halo, segmenter,
 
 # TODO we might want to overwrite the non-stitched segmentation later.
 def write_stitched_segmentation(block_id, blocking, ds, ds_out, node_labels, offsets):
+    print("Write block", block_id)
     off = offsets[block_id]
     block = blocking.getBlock(block_id)
     bb = tuple(slice(beg, end) for beg, end in zip(block.begin, block.end))
@@ -128,7 +129,7 @@ def stitch_segmentation(block_id, key, segmenter, n_threads=40):
     offsets = np.roll(offsets, 1)
     offsets[0] = 0
     offsets = np.cumsum(offsets)
-    n_labels = offsets[-1] + last_offset
+    n_labels = offsets[-1] + last_offset + 1
 
     path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/filtered' % block_id
     # path = '/home/papec/mnt/papec/data_test.n5'
@@ -166,12 +167,12 @@ def stitch_segmentation(block_id, key, segmenter, n_threads=40):
     results = np.concatenate(results, axis=0)
     np.save('tmp_%s.npy' % key, results)
 
+    # results = np.load('tmp_%s.npy' % key)
+    assert results.max() < n_labels
+
     # stitch the segmentation (node level)
-    print("A")
     ufd = nifty.ufd.ufd(n_labels)
-    print("B")
     ufd.merge(results)
-    print("C")
     node_labels = ufd.elementLabeling()
     node_labels, _, _ = vigra.analysis.relabelConsecutive(node_labels, keep_zeros=True, start_label=1)
 
@@ -209,10 +210,10 @@ if __name__ == '__main__':
     block_id = 2
     n_threads = 40
     times = []
-    # for algo in ('mc', 'lmc'):
-    #     for feat in ('local', 'rf'):
-    for algo in ('mc',):
-        for feat in ('local',):
+    for algo in ('mc', 'lmc'):
+        for feat in ('local', 'rf'):
+            if algo == 'mc' and feat == 'local':
+                continue
             key, segmenter = segmenter_factory('mc', 'local', return_merged_nodes=True)
             stitch_time = stitch_segmentation(block_id, key, segmenter)
             times.append(stitch_time)
