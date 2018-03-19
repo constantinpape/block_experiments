@@ -1,15 +1,12 @@
-# import os
+import time
 import json
 from concurrent import futures
-# from itertools import chain
 import numpy as np
 
 import vigra
 import nifty
 import z5py
 from blockwise_segmentations import segmenter_factory
-
-from cremi_tools.viewer.volumina import view
 
 
 def stitch_block_neighbors(ds_seg, ds_affs, blocking, block_id, halo, segmenter, offsets, empty_blocks):
@@ -115,6 +112,9 @@ def write_stitched_segmentation(block_id, blocking, ds, ds_out, node_labels, off
 
 
 def stitch_segmentation(block_id, key, segmenter, n_threads=40):
+
+    t0 = time.time()
+
     offsets = './block_offsets_0%i_%s.json' % (block_id, key)
     # offsets = './test_offsets_mc_affs_not_stitched.json'
     with open(offsets, 'r') as f:
@@ -160,13 +160,18 @@ def stitch_segmentation(block_id, key, segmenter, n_threads=40):
                            halo, segmenter, offsets, empty_blocks)
                  for block_id in block_list]
         results = [t.result() for t in tasks]
+    print("Finished stitching")
 
     results = [res for res in results if res is not None]
     results = np.concatenate(results, axis=0)
+    np.save('tmp_%s.npy' % key, results)
 
     # stitch the segmentation (node level)
+    print("A")
     ufd = nifty.ufd.ufd(n_labels)
+    print("B")
     ufd.merge(results)
+    print("C")
     node_labels = ufd.elementLabeling()
     node_labels, _, _ = vigra.analysis.relabelConsecutive(node_labels, keep_zeros=True, start_label=1)
 
@@ -190,8 +195,25 @@ def stitch_segmentation(block_id, key, segmenter, n_threads=40):
                  for block_id in block_list]
         [t.result() for t in tasks]
 
+    t0 = time.time() - t0
+    print("Stitching segmentation took", t0, "s")
+    return t0
 
+
+# Stitching times:
+# mc-local:
+# mc-rf:
+# lmc-local:
+# lmc-rf:
 if __name__ == '__main__':
     block_id = 2
-    key, segmenter = segmenter_factory('mc', 'local', return_merged_nodes=True)
-    stitch_segmentation(block_id, key, segmenter)
+    n_threads = 40
+    times = []
+    # for algo in ('mc', 'lmc'):
+    #     for feat in ('local', 'rf'):
+    for algo in ('mc',):
+        for feat in ('local',):
+            key, segmenter = segmenter_factory('mc', 'local', return_merged_nodes=True)
+            stitch_time = stitch_segmentation(block_id, key, segmenter)
+            times.append(stitch_time)
+    print(times)
