@@ -15,11 +15,14 @@ import cremi_tools.segmentation as cseg
 
 
 # TODO return the max id of the multicut to find proper offsets
-def segment_block(path, out_key, blocking, block_id, halo, segmenter):
+def segment_block(path, out_key, blocking, block_id, halo, segmenter, block_stride):
     print("Processing block", block_id, "/", blocking.numberOfBlocks)
     t0 = time.time()
     f = z5py.File(path)
     block = blocking.getBlockWithHalo(block_id, halo)
+
+    offset = block_id * block_stride
+    # print("Block", block_id, "has offset:", offset)
 
     # all bounding boxes
     bb = tuple(slice(start, stop)
@@ -34,7 +37,7 @@ def segment_block(path, out_key, blocking, block_id, halo, segmenter):
     # if we only have mask, continue
     if np.sum(mask) == 0:
         print("Finished", block_id, "; contained only mask")
-        return 0, time.time() - t0
+        return False, time.time() - t0
 
     # load affinities and convert them to proper format
     affs = f['predictions/full_affs'][(slice(None),) + bb]
@@ -52,11 +55,14 @@ def segment_block(path, out_key, blocking, block_id, halo, segmenter):
 
     segmentation = segmentation[local_bb].astype('uint64')
     segmentation, max_id, _ = vigra.analysis.relabelConsecutive(segmentation, start_label=1)
-    segmentation[np.logical_not(mask[local_bb])] = 0
+    mask = mask[local_bb]
+    ignore_mask = np.logical_not(mask)
+    segmentation[ignore_mask] = 0
+    segmentation[mask] += offset
 
     ds_out[inner_bb] = segmentation
     print("Finished", block_id)
-    return max_id, time.time() - t0
+    return True, time.time() - t0
 
 
 def segment_mc(ws, affs, n_labels, offsets, return_merged_nodes=False):
@@ -174,7 +180,8 @@ def get_merged_nodes(uv_ids, node_labels):
 
 
 def run_segmentation(block_id, segmenter, key, n_threads=60):
-    path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/filtered' % block_id
+    # path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/filtered' % block_id
+    path = '/home/papec/Work/neurodata_hdd/scotts_blocks/data_test_small.n5'
     f = z5py.File(path)
 
     chunk_shape = (25, 256, 256)
@@ -186,6 +193,8 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
     blocking = nifty.tools.blocking(roiBegin=[0, 0, 0],
                                     roiEnd=list(shape),
                                     blockShape=list(block_shape))
+
+    block_stride = block_shape[0] * block_shape[1] * block_shape[2]
 
     group = 'segmentations'
     if group not in f:
@@ -199,8 +208,8 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
 
     t0 = time.time()
     with futures.ThreadPoolExecutor(n_threads) as tp:
-        tasks = [tp.submit(segment_block, path, out_key, blocking, block_id, halo, segmenter)
-                 for block_id in range(blocking.numberOfBlocks)]
+        tasks = [tp.submit(segment_block, path, out_key, blocking, block, halo, segmenter, block_stride)
+                 for block in range(blocking.numberOfBlocks)]
         results = [t.result() for t in tasks]
     # block_times = [segment_block(path, out_key, blocking, block_id, halo, segmenter)
     #                for block_id in [34]]  # range(blocking.numberOfBlocks)]
@@ -212,10 +221,6 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
         json.dump(times, ft)
 
     offsets = [res[0] for res in results]
-    # we don't do this just yet
-    # offsets = np.roll(offsets, 1)
-    # offsets[0] = 0
-    # offsets = np.cumsum(offsets)
     with open('./block_offsets_0%i_%s.json' % (block_id, key), 'w') as ft:
         json.dump(offsets, ft)
 
@@ -275,8 +280,8 @@ def segmenter_factory(algo, feats, return_merged_nodes=False):
 
 if __name__ == '__main__':
     block_id = 2
-    algo = 'lmc'
-    for feat in ('local', 'rf'):
+    algo = 'mc'
+    n_threads = 8
+    for feat in ('local',):
         key, segmenter = segmenter_factory(algo, feat)
-        n_threads = 60
         run_segmentation(block_id, segmenter, key, n_threads)
