@@ -4,7 +4,7 @@ from cremi_tools.skeletons import build_skeleton_metrics
 
 
 def false_split_score(metrics):
-    pass
+    split_score = metrics.computeSplitScores()
 
 
 def evaluate_segmentation(block_id, seg_key, n_threads):

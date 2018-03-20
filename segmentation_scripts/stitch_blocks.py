@@ -35,21 +35,21 @@ def stitch_block_neighbors(ds_seg, ds_affs, blocking, block_id, halo, segmenter,
         overlap_bb = tuple(slice(inner_block.begin[i], inner_block.end[i]) if i != dim else
                            slice(inner_block.end[i] - halo[i], outer_block.end[i])
                            for i in range(3))
-        # bb_offset = tuple(ovlp.start for ovlp in overlap_bb)
+        bb_offset = tuple(ovlp.start for ovlp in overlap_bb)
 
         # load segmentation and affinities for the overlap
         seg = ds_seg[overlap_bb]
 
-        # # find the parts off the overlap associated with this block and the neighbor block
-        # bb_a = tuple(slice(inner_block.begin[i] - off, inner_block.end[i] - off) if i != dim else
-        #              slice(inner_block.end[i] - off, outer_block.end[i] - off)
-        #              for i, off in enumerate(bb_offset))
+        # find the parts off the overlap associated with this block and the neighbor block
+        bb_a = tuple(slice(inner_block.begin[i] - off, inner_block.end[i] - off) if i != dim else
+                     slice(inner_block.end[i] - off, outer_block.end[i] - off)
+                     for i, off in enumerate(bb_offset))
 
-        # ngb_block = blocking.getBlockWithHalo(ngb_id, halo)
-        # inner_ngb, outer_ngb = ngb_block.innerBlock, ngb_block.outerBlock
-        # bb_b = tuple(slice(inner_ngb.begin[i] - off, inner_ngb.end[i] - off) if i != dim else
-        #              slice(outer_ngb.begin[i] - off, inner_ngb.begin[i] - off)
-        #              for i, off in enumerate(bb_offset))
+        ngb_block = blocking.getBlockWithHalo(ngb_id, halo)
+        inner_ngb, outer_ngb = ngb_block.innerBlock, ngb_block.outerBlock
+        bb_b = tuple(slice(inner_ngb.begin[i] - off, inner_ngb.end[i] - off) if i != dim else
+                     slice(outer_ngb.begin[i] - off, inner_ngb.begin[i] - off)
+                     for i, off in enumerate(bb_offset))
 
         # add proper offsets to the 2 segmentation halves
         # (but keep mask !)
@@ -66,8 +66,8 @@ def stitch_block_neighbors(ds_seg, ds_affs, blocking, block_id, halo, segmenter,
         affs = 1. - affs
 
         # FIXME this is exactly the opposite of what I have expected ?!
-        # seg[bb_a] += offsets[ngb_id]
-        # seg[bb_b] += offsets[block_id]
+        seg[bb_a] += offsets[ngb_id]
+        seg[bb_b] += offsets[block_id]
         seg[bg_mask] = 0
 
         # TODO restrict merges to segments that actually touch at the overlap surface ??
@@ -83,14 +83,14 @@ def stitch_block_neighbors(ds_seg, ds_affs, blocking, block_id, halo, segmenter,
 
 
 # TODO we might want to overwrite the non-stitched segmentation later.
-def write_stitched_segmentation(block_id, blocking, ds, ds_out, node_labels):
+def write_stitched_segmentation(block_id, blocking, ds, ds_out, node_labels, offsets):
     print("Write block", block_id)
-    # off = offsets[block_id]
+    off = offsets[block_id]
     block = blocking.getBlock(block_id)
     bb = tuple(slice(beg, end) for beg, end in zip(block.begin, block.end))
     seg = ds[bb]
-    # mask = seg != 0
-    # seg[mask] += off
+    mask = seg != 0
+    seg[mask] += off
     seg = nifty.tools.take(node_labels, seg)
     ds_out[bb] = seg
 
@@ -121,21 +121,21 @@ def stitch_segmentation(block_id, key, segmenter, n_threads=40):
     with open(offsets, 'r') as f:
         offsets = np.array(json.load(f), dtype='uint64')
 
-    empty_blocks = np.logical_not(offsets)
+    # empty_blocks = np.logical_not(offsets)
 
     # # add up the offsets
     # # ignore blocks which have only background (offset = zero)
-    # block_list = np.where(offsets > 0)[0]
-    # empty_blocks = offsets == 0
+    block_list = np.where(offsets > 0)[0]
+    empty_blocks = offsets == 0
 
-    # last_offset = offsets[-1]
-    # offsets = np.roll(offsets, 1)
-    # offsets[0] = 0
-    # offsets = np.cumsum(offsets)
-    # n_labels = offsets[-1] + last_offset + 1
+    last_offset = offsets[-1]
+    offsets = np.roll(offsets, 1)
+    offsets[0] = 0
+    offsets = np.cumsum(offsets)
+    n_labels = offsets[-1] + last_offset + 1
 
-    # path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/filtered' % block_id
-    path = '/home/papec/Work/neurodata_hdd/scotts_blocks/data_test_small.n5'
+    path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/filtered' % block_id
+    # path = '/groups/saalfeld/home/papec/data_test.n5'
     f = z5py.File(path)
 
     chunk_shape = (25, 256, 256)
@@ -143,7 +143,8 @@ def stitch_segmentation(block_id, key, segmenter, n_threads=40):
     block_shape = tuple(cs * 2 for cs in chunk_shape)
     halo = [5, 50, 50]
 
-    shape = f['gray'].shape
+    # shape = f['gray'].shape
+    shape = (200, 2048, 2048)
     blocking = nifty.tools.blocking(roiBegin=[0, 0, 0],
                                     roiEnd=list(shape),
                                     blockShape=list(block_shape))
@@ -201,7 +202,7 @@ def stitch_segmentation(block_id, key, segmenter, n_threads=40):
 
     with futures.ThreadPoolExecutor(n_threads) as tp:
         tasks = [tp.submit(write_stitched_segmentation, block, blocking, ds,
-                           ds_out, node_labels)
+                           ds_out, node_labels, offsets)
                  for block in block_list]
         [t.result() for t in tasks]
 
@@ -217,7 +218,7 @@ def stitch_segmentation(block_id, key, segmenter, n_threads=40):
 # lmc-rf:
 if __name__ == '__main__':
     block_id = 2
-    n_threads = 8
+    n_threads = 60
     times = []
     # for algo in ('mc', 'lmc'):
     #     for feat in ('local', 'rf'):
@@ -225,7 +226,7 @@ if __name__ == '__main__':
         for feat in ('local',):
             # if algo == 'mc' and feat == 'local':
             #     continue
-            key, segmenter = segmenter_factory('mc', 'local', return_merged_nodes=True)
+            key, segmenter = segmenter_factory(algo, feat, return_merged_nodes=True)
             stitch_time = stitch_segmentation(block_id, key, segmenter, n_threads)
             times.append(stitch_time)
     print(times)

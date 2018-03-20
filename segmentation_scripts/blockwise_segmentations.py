@@ -14,6 +14,22 @@ import z5py
 import cremi_tools.segmentation as cseg
 
 
+def preagglomerate(affs, ws, n_labels, mask):
+    offsets = [[-1, 0, 0], [0, -1, 0], [0, 0, -1],
+               [-2, 0, 0], [0, -3, 0], [0, 0, -3],
+               [-3, 0, 0], [0, -9, 0], [0, 0, -9],
+               [-4, 0, 0], [0, -27, 0], [0, 0, -27]]
+    rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
+    probs = nrag.accumulateAffinityStandartFeatures(rag, affs,
+                                                    offsets, numberOfThreads=1)[:, 0]
+    # TODO determine threshold
+    agglomerator = cseg.MalaClustering(0.8)
+    g = nifty.graph.undirectedGraph(rag.numberOfNodes)
+    g.insertEdges(rag.uvIds())
+    ws = agglomerator(g, probs)
+    return ws, int(ws.max())
+
+
 # TODO return the max id of the multicut to find proper offsets
 def segment_block(path, out_key, blocking, block_id, halo, segmenter, block_stride):
     print("Processing block", block_id, "/", blocking.numberOfBlocks)
@@ -21,7 +37,7 @@ def segment_block(path, out_key, blocking, block_id, halo, segmenter, block_stri
     f = z5py.File(path)
     block = blocking.getBlockWithHalo(block_id, halo)
 
-    offset = block_id * block_stride
+    # offset = block_id * block_stride
     # print("Block", block_id, "has offset:", offset)
 
     # all bounding boxes
@@ -37,7 +53,8 @@ def segment_block(path, out_key, blocking, block_id, halo, segmenter, block_stri
     # if we only have mask, continue
     if np.sum(mask) == 0:
         print("Finished", block_id, "; contained only mask")
-        return False, time.time() - t0
+        # return False, time.time() - t0
+        return 0, time.time() - t0
 
     # load affinities and convert them to proper format
     affs = f['predictions/full_affs'][(slice(None),) + bb]
@@ -46,11 +63,17 @@ def segment_block(path, out_key, blocking, block_id, halo, segmenter, block_stri
     affs = 1. - affs
 
     # make watershed
-    wslr = cseg.LRAffinityWatershed(threshold_cc=0.1, threshold_dt=0.2, sigma_seeds=2.,
-                                    size_filter=50)
-    ws, max_label = wslr(affs, mask)
+    # wslr = cseg.LRAffinityWatershed(threshold_cc=0.1, threshold_dt=0.2, sigma_seeds=2.,
+    #                                 size_filter=50)
+    # ws, max_id = wslr(affs, mask)
 
-    segmentation = segmenter(ws, affs, max_label + 1)
+    ws_input = (np.mean(affs[1:3], axis=0) + .5 * affs[0]) / 1.5
+    wsfu = cseg.DTWatershed(threshold_dt=0.2, sigma_seeds=1.6, size_filter=30, n_threads=1)
+    ws, max_id = wsfu(ws_input, mask)
+
+    ws, max_id = preagglomerate(affs, ws, max_id + 1, mask)
+
+    segmentation = segmenter(ws, affs, max_id + 1)
     ds_out = f[out_key]
 
     segmentation = segmentation[local_bb].astype('uint64')
@@ -58,11 +81,11 @@ def segment_block(path, out_key, blocking, block_id, halo, segmenter, block_stri
     mask = mask[local_bb]
     ignore_mask = np.logical_not(mask)
     segmentation[ignore_mask] = 0
-    segmentation[mask] += offset
+    # segmentation[mask] += offset
 
     ds_out[inner_bb] = segmentation
     print("Finished", block_id)
-    return True, time.time() - t0
+    return max_id, time.time() - t0
 
 
 def segment_mc(ws, affs, n_labels, offsets, return_merged_nodes=False):
@@ -180,8 +203,8 @@ def get_merged_nodes(uv_ids, node_labels):
 
 
 def run_segmentation(block_id, segmenter, key, n_threads=60):
-    # path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/filtered' % block_id
-    path = '/home/papec/Work/neurodata_hdd/scotts_blocks/data_test_small.n5'
+    path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/filtered' % block_id
+    # path = '/groups/saalfeld/home/papec/Work/neurodata_hdd/scotts_blocks/data_test.n5'
     f = z5py.File(path)
 
     chunk_shape = (25, 256, 256)
@@ -189,9 +212,14 @@ def run_segmentation(block_id, segmenter, key, n_threads=60):
     block_shape = tuple(cs * 2 for cs in chunk_shape)
     halo = [5, 50, 50]
 
-    shape = f['gray'].shape
-    blocking = nifty.tools.blocking(roiBegin=[0, 0, 0],
-                                    roiEnd=list(shape),
+    shape = (200, 2048, 2048)
+    # shape = f['gray'].shape
+    # central = tuple(sh // 2 for sh in shape)
+    # offset = (100, 1000, 1000)
+    # bb = tuple(slice(c - off, c + off) for c, off in zip(central, offset))
+
+    blocking = nifty.tools.blocking(roiBegin=list(b.start for b in bb),
+                                    roiEnd=list(b.stop for b in bb),
                                     blockShape=list(block_shape))
 
     block_stride = block_shape[0] * block_shape[1] * block_shape[2]
@@ -236,7 +264,7 @@ def segmenter_factory(algo, feats, return_merged_nodes=False):
 
         if feats == 'local':
             # affinity based mc
-            key = 'mc_affs_not_stitched'
+            key = 'mc_affs_not_stitched2'
             segmenter = partial(segment_mc, offsets=offsets, return_merged_nodes=return_merged_nodes)
 
         elif feats == 'rf':
@@ -281,7 +309,7 @@ def segmenter_factory(algo, feats, return_merged_nodes=False):
 if __name__ == '__main__':
     block_id = 2
     algo = 'mc'
-    n_threads = 8
+    n_threads = 60
     for feat in ('local',):
         key, segmenter = segmenter_factory(algo, feat)
         run_segmentation(block_id, segmenter, key, n_threads)
