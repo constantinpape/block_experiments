@@ -6,7 +6,7 @@ import numpy as np
 import vigra
 import nifty
 import z5py
-from blockwise_segmentations import segmenter_factory
+from backend import segmenter_factory
 
 
 def stitch_block_neighbors(ds_seg, ds_affs, blocking, block_id, halo, segmenter, offsets, empty_blocks):
