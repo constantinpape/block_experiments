@@ -77,6 +77,11 @@ def evaluate_segmentation(block_id, seg_key, n_threads):
     distance_statistics(metrics)
 
 
+def plot_distance_statistics(cache_path='./skeleton_distance_cache.pkl'):
+    import matplotlib.pyplot as plt
+
+
+
 if __name__ == '__main__':
     block_id = 2
     seg_key = 'multicut_more_features'
