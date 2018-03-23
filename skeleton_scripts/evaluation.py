@@ -33,10 +33,13 @@ def false_split_score(metrics):
 def explicit_merge_score(metrics):
     merges = metrics.computeExplicitMerges()
     if merges:
+        scores, n_merges = metrics.computeExplicitMergeScores()
         print("Explicit merges")
         for skel_id, labels in merges.items():
-            print("Skeleton", skel_id, "contains merge with label")
+            print("Skeleton", skel_id, "contains merge with labels")
             print(labels)
+            print("with merge score:", scores[skel_id])
+            print("and number of merge points:", n_merges[skel_id])
     else:
         print("No false merges")
 
@@ -71,10 +74,20 @@ def evaluate_segmentation(block_id, seg_key, n_threads):
     print("Building skeleton metrics in...")
     metrics = build_skeleton_metrics(label_file, skeleton_file, n_threads)
     print("... in %f s" % (time.time() - t0,))
+    print()
 
-    # false_split_score(metrics)
-    # explicit_merge_score(metrics)
-    distance_statistics(metrics)
+    false_split_score(metrics)
+    print()
+    explicit_merge_score(metrics)
+    print()
+    # distance_statistics(metrics)
+
+    correct, split, merge, n_merges = metrics.computeGoogleScore(n_threads)
+    print("Overall edge scores:")
+    print("Correct:     ", correct)
+    print("Split:       ", split)
+    print("Merge:       ", merge)
+    print("Merge Points:", n_merges)
 
 
 #
@@ -102,5 +115,5 @@ if __name__ == '__main__':
     seg_key = 'multicut_more_features'
     # seg_key = 'wsdt_mc_affs_stitched'
     n_threads = 40
-    # evaluate_segmentation(block_id, seg_key, n_threads)
-    plot_distance_statistics()
+    evaluate_segmentation(block_id, seg_key, n_threads)
+    # plot_distance_statistics()
