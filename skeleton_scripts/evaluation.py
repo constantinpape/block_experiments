@@ -77,9 +77,24 @@ def evaluate_segmentation(block_id, seg_key, n_threads):
     distance_statistics(metrics)
 
 
+#
 def plot_distance_statistics(cache_path='./skeleton_distance_cache.pkl'):
     import matplotlib.pyplot as plt
+    with open(cache_path, 'rb') as f:
+        stats = pickle.load(f)
 
+    n_bins = 32
+    for skel_id, vals in stats.items():
+        mean_dists = []
+        std_dists = []
+        for val in vals:
+            mean_dists.append(np.mean(val))
+            std_dists.append(np.std(val))
+        # TODO plot histogram
+        fig, ax = plt.subplots(2)
+        ax[0].hist(mean_dists, bins=n_bins)
+        ax[1].hist(std_dists, bins=n_bins)
+        plt.show()
 
 
 if __name__ == '__main__':
@@ -87,4 +102,5 @@ if __name__ == '__main__':
     seg_key = 'multicut_more_features'
     # seg_key = 'wsdt_mc_affs_stitched'
     n_threads = 40
-    evaluate_segmentation(block_id, seg_key, n_threads)
+    # evaluate_segmentation(block_id, seg_key, n_threads)
+    plot_distance_statistics()
