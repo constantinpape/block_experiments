@@ -10,7 +10,8 @@ import z5py
 # TODO run connected components on synapses
 
 
-def get_synapses_to_objects(seg_path, seg_key, syn_path, syn_key, n_threads):
+def get_synapses_to_objects(seg_path, seg_key, syn_path, syn_key,
+                            overlap_threshold, n_threads):
     ds_seg = z5py.File(seg_path)[seg_key]
     ds_syn = z5py.File(syn_path)[syn_key]
     shape = ds_seg.shape
@@ -34,7 +35,11 @@ def get_synapses_to_objects(seg_path, seg_key, syn_path, syn_key, n_threads):
         syn = syn[syn_mask]
 
         syn_ids = np.unique(syn)
-        return {syn_id: np.unique(seg[syn == syn_id]) for syn_id in syn_ids}
+        synapses_to_objects = {}
+        for syn_id in syn_ids:
+            object_ids, overlaps = np.unique(seg[syn == syn_id], return_counts=True)
+            synapses_to_objects[syn_id] = object_ids[overlaps > overlap_threshold]
+        return synapses_to_objects
 
     with futures.ThreadPoolExecutor(n_threads) as tp:
         tasks = [tp.submit(map_in_chunk, block_id)
