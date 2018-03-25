@@ -77,10 +77,11 @@ def extract_undirected_connectivity():
 
 
 if __name__ == '__main__':
-    seg_path = ''
-    seg_key = ''
-    syn_path = ''
-    syn_key = ''
+    seg_path = '/nrs/saalfeld/lauritzen/02/workspace.n5/filtered'
+    seg_key = 'segmentations/multicut_more_features'
+    syn_path = '/nrs/saalfeld/lauritzen/02/workspace.n5'
+    syn_key = 'syncleft_dist_DTU-2_200000_cc'
+
     t0 = time.time()
     syns_to_objs = get_synapses_to_objects(seg_path, seg_key, syn_path, syn_key, 8)
     print("Extracting synapses to objects in %f s" % (time.time() - t0))
