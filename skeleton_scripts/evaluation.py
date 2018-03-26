@@ -115,5 +115,5 @@ if __name__ == '__main__':
     seg_key = 'multicut_more_features'
     # seg_key = 'wsdt_mc_affs_stitched'
     n_threads = 40
-    evaluate_segmentation(block_id, seg_key, n_threads)
-    # plot_distance_statistics()
+    # evaluate_segmentation(block_id, seg_key, n_threads)
+    plot_distance_statistics()
