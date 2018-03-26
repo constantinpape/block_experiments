@@ -37,8 +37,13 @@ def get_synapses_to_objects(seg_path, seg_key, syn_path, syn_key,
         syn_ids = np.unique(syn)
         synapses_to_objects = {}
         for syn_id in syn_ids:
+
             object_ids, overlaps = np.unique(seg[syn == syn_id], return_counts=True)
+            if object_ids[0] == 0:
+                object_ids = object_ids[1:]
+                overlaps = overlaps[1:]
             synapses_to_objects[syn_id] = object_ids[overlaps > overlap_threshold]
+
         return synapses_to_objects
 
     with futures.ThreadPoolExecutor(n_threads) as tp:
