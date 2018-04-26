@@ -92,10 +92,23 @@ def evaluate_segmentation(block_id, seg_key, n_threads):
 
 #
 def plot_distance_statistics(cache_path='./skeleton_distance_cache.pkl'):
-    import matplotlib.pyplot as plt
+    import z5py
+    from cremi_tools.skeletons import smooth_distance_statistics
+    from cremi_tools.skeletons import smooth_distance_statistics_bfs
+    skeleton_folder = '/home/papec/Downloads/skeletons'
+    skeleton_ids = os.listdir(skeleton_folder)
+    edges = {}
+    for skel_id in skeleton_ids:
+        skel_path = os.path.join(skeleton_folder, skel_id)
+        edges[int(skel_id)] = z5py.File(skel_path)['edges'][:]
     with open(cache_path, 'rb') as f:
         stats = pickle.load(f)
 
+    # smooth_distance_statistics(stats, edges, 3)
+    smooth_distance_statistics_bfs(stats, edges, 3)
+    quit()
+
+    import matplotlib.pyplot as plt
     n_bins = 32
     for skel_id, vals in stats.items():
         mean_dists = []
