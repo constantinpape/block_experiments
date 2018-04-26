@@ -143,8 +143,8 @@ def stitch_segmentation(block_id, key, segmenter, n_threads=40):
     block_shape = tuple(cs * 2 for cs in chunk_shape)
     halo = [5, 50, 50]
 
-    # shape = f['gray'].shape
-    shape = (200, 2048, 2048)
+    shape = f['gray'].shape
+    # shape = (200, 2048, 2048)
     blocking = nifty.tools.blocking(roiBegin=[0, 0, 0],
                                     roiEnd=list(shape),
                                     blockShape=list(block_shape))
@@ -220,13 +220,11 @@ if __name__ == '__main__':
     block_id = 2
     n_threads = 60
     times = []
-    # for algo in ('mc', 'lmc'):
-    #     for feat in ('local', 'rf'):
-    for algo in ('mc',):
-        for feat in ('local',):
-            # if algo == 'mc' and feat == 'local':
-            #     continue
-            key, segmenter = segmenter_factory(algo, feat, return_merged_nodes=True)
-            stitch_time = stitch_segmentation(block_id, key, segmenter, n_threads)
-            times.append(stitch_time)
+    algo = 'mc'
+    feat = 'local'
+    key2, segmenter = segmenter_factory(algo, feat, return_merged_nodes=True)
+    for key1 in ('wslr', 'wsdt'):
+        key = '%s_%s' % (key1, key2)
+        stitch_time = stitch_segmentation(block_id, key, segmenter, n_threads)
+        times.append(stitch_time)
     print(times)

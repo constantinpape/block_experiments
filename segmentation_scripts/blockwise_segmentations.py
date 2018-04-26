@@ -29,6 +29,7 @@ def segment_block(path, out_key, blocking, block_id,
                                             block.innerBlockLocal.end))
 
     # load mask
+    # mask = f['masks/combined_mask'][bb].astype('bool')
     mask = f['masks/min_filter_mask'][bb].astype('bool')
     # if we only have mask, continue
     if np.sum(mask) == 0:
@@ -58,9 +59,9 @@ def segment_block(path, out_key, blocking, block_id,
 
 
 def run_segmentation(block_id, fragmenter, segmenter, key, n_threads=60):
-    # path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/filtered' % block_id
+    path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/filtered' % block_id
     # path = '/groups/saalfeld/home/papec/Work/neurodata_hdd/scotts_blocks/data_test.n5'
-    path = '/home/papec/Work/neurodata_hdd/scotts_blocks/data_test_large.n5'
+    # path = '/home/papec/Work/neurodata_hdd/scotts_blocks/data_test_large.n5'
     f = z5py.File(path)
     shape = f['gray'].shape
 
@@ -113,7 +114,7 @@ if __name__ == '__main__':
     block_id = 2
     algo = 'mc'
     feat = 'local'
-    n_threads = 8
+    n_threads = 40
     key2, segmenter = segmenter_factory(algo, feat)
     for ws in ('wslr', 'wsdt', 'mws', 'wsdt_pre'):
         key1, fragmenter = fragmenter_factory(ws)
