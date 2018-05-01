@@ -80,12 +80,21 @@ def compute_wslr_fragments(affs, mask, channel_weights=None, thresh=0.05):
 # TODO features only based on neareast affinities ?
 def compute_mc_segments(ws, affs, n_labels, offsets):
     rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
-    probs = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)[:, 0]
     uv_ids = rag.uvIds()
+
+    # we can have a single over-segment id for (small border) blocks
+    # resulting in 0 edges
+    if(uv_ids.shape[0] == 0):
+        # print("Didn't find any edges for ws-segmentation containing ids")
+        # print(np.unique(ws))
+        return ws
+
+    probs = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)[:, 0]
 
     mc = cseg.Multicut('kernighan-lin', weight_edges=False)
     costs = mc.probabilities_to_costs(probs)
     ignore_edges = (uv_ids == 0).any(axis=1)
+    # print(probs.shape, uv_ids.shape, costs.shape)
     costs[ignore_edges] = 5 * costs.min()
 
     graph = nifty.graph.undirectedGraph(n_labels)
@@ -97,9 +106,17 @@ def compute_mc_segments(ws, affs, n_labels, offsets):
 # TODO features only based on neareast affinities ?
 def compute_mcrf_segments(ws, affs, n_labels, offsets, rf):
     rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
+    uv_ids = rag.uvIds()
+
+    # we can have a single over-segment id for (small border) blocks
+    # resulting in 0 edges
+    if(uv_ids.shape[0] == 0):
+        # print("Didn't find any edges for ws-segmentation containing ids")
+        # print(np.unique(ws))
+        return ws
+
     feats = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)
     probs = rf.predict_proba(feats)[:, 1]
-    uv_ids = rag.uvIds()
 
     mc = cseg.Multicut('kernighan-lin', weight_edges=False)
     costs = mc.probabilities_to_costs(probs)

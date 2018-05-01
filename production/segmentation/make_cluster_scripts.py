@@ -181,6 +181,21 @@ def make_batch_jobs_step5(path, out_key, cache_folder, n_jobs, block_shape,
     make_executable(script_file)
 
 
+def make_run_job(n_jobs, executable, script_file='run.sh'):
+    # copy the relevant files
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    cwd = os.getcwd()
+    assert os.path.exists(executable), "Could not find python at %s" % executable
+    shebang = '#! %s' % executable
+
+    copy(os.path.join(file_dir, 'run_cluster.py.py'), cwd)
+    replace_shebang('run_cluster.py.py', shebang)
+    make_executable('run_cluster.py.py')
+    with open(script_file, 'w') as f:
+        command = './run_cluster.py %i' % n_jobs
+        f.write(command + '\n')
+
+
 def make_batch_jobs(path, out_key, cache_folder, n_jobs,
                     block_shape, halo, executable,
                     rf_path='', eta=10):
@@ -222,3 +237,5 @@ def make_batch_jobs(path, out_key, cache_folder, n_jobs,
     make_batch_jobs_step5(path, out_key, cache_folder,
                           n_jobs, block_shape,
                           executable, eta_[4],)
+
+    make_run_job(n_jobs, executable)
