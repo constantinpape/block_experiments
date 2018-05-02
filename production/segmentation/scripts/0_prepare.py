@@ -32,6 +32,10 @@ def create_volumes(f, out_key, shape, block_shape):
     if out_key not in f:
         f.create_dataset(out_key, shape=shape, dtype='uint64', compression='gzip', chunks=chunks)
 
+    out_key2 = out_key + '_blocked'
+    if out_key2 not in f:
+        f.create_dataset(out_key2, shape=shape, dtype='uint64', compression='gzip', chunks=chunks)
+
 
 def prepare(path, out_key, cache_folder, n_jobs, block_shape):
     if not os.path.exists(cache_folder):

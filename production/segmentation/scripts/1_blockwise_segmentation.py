@@ -56,7 +56,9 @@ def segment_block(path, out_key, blocking, block_id,
     # if we have glia predictions, remove them
     if n_channels == 13:
         affs = affs[:-1]
-    segmentation = segmenter(ws, affs, max_id + 1)
+    segmentation = segmenter(ws, affs, max_id + 1, block_id=block_id)
+    # for debug purposes
+    segmentation = ws
     ds_out = f[out_key]
 
     segmentation = segmentation[local_bb].astype('uint64')
@@ -78,15 +80,15 @@ def compute_wslr_fragments(affs, mask, channel_weights=None, thresh=0.05):
 
 
 # TODO features only based on neareast affinities ?
-def compute_mc_segments(ws, affs, n_labels, offsets):
+def compute_mc_segments(ws, affs, n_labels, offsets, block_id):
     rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
     uv_ids = rag.uvIds()
 
     # we can have a single over-segment id for (small border) blocks
     # resulting in 0 edges
     if(uv_ids.shape[0] == 0):
-        # print("Didn't find any edges for ws-segmentation containing ids")
-        # print(np.unique(ws))
+        print("WARNING:, block", block_id, "contains only a single id, but is not masked")
+        print("This is may be caused by an incorrect mask")
         return ws
 
     probs = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)[:, 0]
@@ -104,15 +106,15 @@ def compute_mc_segments(ws, affs, n_labels, offsets):
 
 
 # TODO features only based on neareast affinities ?
-def compute_mcrf_segments(ws, affs, n_labels, offsets, rf):
+def compute_mcrf_segments(ws, affs, n_labels, offsets, rf, block_id):
     rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
     uv_ids = rag.uvIds()
 
     # we can have a single over-segment id for (small border) blocks
     # resulting in 0 edges
     if(uv_ids.shape[0] == 0):
-        # print("Didn't find any edges for ws-segmentation containing ids")
-        # print(np.unique(ws))
+        print("WARNING:, block", block_id, "contains only a single id, but is not masked")
+        print("This is may be caused by an incorrect mask")
         return ws
 
     feats = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)

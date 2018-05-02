@@ -42,10 +42,17 @@ def write_blocks(path, out_key, cache_folder, job_id, block_shape):
                                     blockShape=list(block_shape))
 
     f = z5py.File(path)
-    ds = f[out_key]
+    ds = f[out_key + '_blocked']
+    ds_out = f[out_key]
 
-    [write_block(block_id, blocking, ds, ds, node_labels, offsets)
+    [write_block(block_id, blocking, ds, ds_out, node_labels, offsets)
      for block_id in block_list]
+
+    # write out the max-label with job 0
+    if job_id == 0:
+        with open(os.path.join(cache_folder, 'max_label.json')) as f:
+            max_label = json.load(f)['max_label']
+        ds_out.attrs['maxId'] = max_label
 
     print("Success")
 

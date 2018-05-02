@@ -103,12 +103,12 @@ def compute_mc_nodes(ws, affs, n_labels, offsets):
     ignore_edges = (uv_ids == 0).any(axis=1)
     costs[ignore_edges] = 5 * costs.min()
 
+    # run multicut
     graph = nifty.graph.undirectedGraph(n_labels)
     graph.insertEdges(uv_ids)
     node_labels = mc(graph, costs)
-
-    # relabel the node labels consecutively and make sure that zero
-    # is still mapped to zero
+    # find the pairs of merged nodes from the multicut
+    # node labeling
     return get_merged_nodes(uv_ids, node_labels)
 
 
@@ -123,9 +123,12 @@ def compute_mcrf_nodes(ws, affs, n_labels, offsets, rf):
     ignore_edges = (uv_ids == 0).any(axis=1)
     costs[ignore_edges] = 5 * costs.min()
 
+    # run multicut
     graph = nifty.graph.undirectedGraph(n_labels)
     graph.insertEdges(uv_ids)
     node_labels = mc(graph, costs)
+    # find the pairs of merged nodes from the multicut
+    # node labeling
     return get_merged_nodes(uv_ids, node_labels)
 
 
@@ -145,6 +148,7 @@ def stitch_blocks(path, out_key, cache_folder, job_id, block_shape, halo, rf_pat
         offsets_dict = json.load(f)
         block_offsets = offsets_dict['offsets']
         empty_blocks = offsets_dict['empty_blocks']
+        max_label = offsets_dict['n_labels'] - 1
 
     f = z5py.File(path)
 
@@ -175,6 +179,10 @@ def stitch_blocks(path, out_key, cache_folder, job_id, block_shape, halo, rf_pat
     np.save(out_path, assignments)
 
     times = [res[1] for res in results]
+
+    # write out the max-label with job 0
+    if job_id == 0:
+        ds_seg.attrs['maxId'] = max_label
 
     print("Success")
     for block_index, tproc in enumerate(times):

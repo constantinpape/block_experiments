@@ -1,6 +1,7 @@
 #! /usr/bin/python
 
 import argparse
+import json
 import os
 import numpy as np
 import vigra
@@ -24,9 +25,14 @@ def compute_node_assignment(cache_folder, n_jobs):
     node_labels = ufd.elementLabeling()
     vigra.analysis.relabelConsecutive(node_labels, keep_zeros=True,
                                       start_label=1, out=node_labels)
+    max_label = int(node_labels.max())
 
     out_path = os.path.join(cache_folder, 'node_assignments.npy')
     np.save(out_path, node_labels)
+
+    out_path = os.path.join(cache_folder, 'max_label.json')
+    with open(out_path, 'w') as f:
+        json.dump({'max_label': max_label}, f)
 
 
 if __name__ == '__main__':

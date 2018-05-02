@@ -41,7 +41,7 @@ def run_pipeline(path, out_key, cache_folder,
     # Compute the blockwise segmentations
     with futures.ProcessPoolExecutor(max_workers) as pp:
         tasks = [pp.submit(step, 'scripts/1_blockwise_segmentation.py',
-                           path, out_key,
+                           path, out_key + '_blocked',
                            cache_folder, job_id,
                            block_shape, halo, rf_path)
                  for job_id in range(n_jobs)]
@@ -56,7 +56,7 @@ def run_pipeline(path, out_key, cache_folder,
     # running multicut on the node overlaps
     with futures.ProcessPoolExecutor(max_workers) as pp:
         tasks = [pp.submit(step, 'scripts/3_blockwise_stitching.py',
-                           path, out_key,
+                           path, out_key + '_blocked',
                            cache_folder, job_id,
                            block_shape, halo, rf_path)
                  for job_id in range(n_jobs)]
@@ -83,8 +83,8 @@ if __name__ == '__main__':
 
     cache_folder = '/nrs/saalfeld/papec/cache/cache_lauritzen_%i' % block_id
 
-    max_workers = 40
-    n_jobs = 40
+    max_workers = 60
+    n_jobs = 60
 
     block_shape = (52, 512, 512)
     halo = (5, 50, 50)
