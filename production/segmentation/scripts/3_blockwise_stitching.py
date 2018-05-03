@@ -18,7 +18,8 @@ import cremi_tools.segmentation as cseg
 def stitch_block_with_neighbors(ds_seg, ds_affs,
                                 blocking, block_id,
                                 halo, segmenter,
-                                offsets, empty_blocks):
+                                empty_blocks):
+                                # offsets, empty_blocks):
 
     t0 = time.time()
     block = blocking.getBlockWithHalo(block_id, list(halo))
@@ -43,21 +44,21 @@ def stitch_block_with_neighbors(ds_seg, ds_affs,
         overlap_bb = tuple(slice(inner_block.begin[i], inner_block.end[i]) if i != dim else
                            slice(inner_block.end[i] - halo[i], outer_block.end[i])
                            for i in range(3))
-        bb_offset = tuple(ovlp.start for ovlp in overlap_bb)
+        # bb_offset = tuple(ovlp.start for ovlp in overlap_bb)
 
         # load segmentation and affinities for the overlap
         seg = ds_seg[overlap_bb]
 
         # find the parts off the overlap associated with this block and the neighbor block
-        bb_a = tuple(slice(inner_block.begin[i] - off, inner_block.end[i] - off) if i != dim else
-                     slice(inner_block.end[i] - off, outer_block.end[i] - off)
-                     for i, off in enumerate(bb_offset))
+        # bb_a = tuple(slice(inner_block.begin[i] - off, inner_block.end[i] - off) if i != dim else
+        #              slice(inner_block.end[i] - off, outer_block.end[i] - off)
+        #              for i, off in enumerate(bb_offset))
 
-        ngb_block = blocking.getBlockWithHalo(ngb_id, list(halo))
-        inner_ngb, outer_ngb = ngb_block.innerBlock, ngb_block.outerBlock
-        bb_b = tuple(slice(inner_ngb.begin[i] - off, inner_ngb.end[i] - off) if i != dim else
-                     slice(outer_ngb.begin[i] - off, inner_ngb.begin[i] - off)
-                     for i, off in enumerate(bb_offset))
+        # ngb_block = blocking.getBlockWithHalo(ngb_id, list(halo))
+        # inner_ngb, outer_ngb = ngb_block.innerBlock, ngb_block.outerBlock
+        # bb_b = tuple(slice(inner_ngb.begin[i] - off, inner_ngb.end[i] - off) if i != dim else
+        #              slice(outer_ngb.begin[i] - off, inner_ngb.begin[i] - off)
+        #              for i, off in enumerate(bb_offset))
 
         # add proper offsets to the 2 segmentation halves
         # (but keep mask !)
@@ -67,20 +68,24 @@ def stitch_block_with_neighbors(ds_seg, ds_affs,
         if np.sum(bg_mask) == bg_mask.size:
             continue
 
-        affs = ds_affs[(slice(0, 12),) + overlap_bb]
+        affs = ds_affs[(slice(None),) + overlap_bb]
         if affs.dtype == np.dtype('uint8'):
             affs = affs.astype('float32') / 255.
+        glia = affs[-1]
+        affs = affs[:-1]
         affs = 1. - affs
 
-        # FIXME this is exactly the opposite of what I have expected ?!
-        seg[bb_a] += offsets[ngb_id]
-        seg[bb_b] += offsets[block_id]
-        seg[bg_mask] = 0
+        # TODO we try merging without on the fly offsets, and do it in a seperate
+        # step instead
+        # # FIXME this is exactly the opposite of what I have expected ?!
+        # seg[bb_a] += offsets[ngb_id]
+        # seg[bb_b] += offsets[block_id]
+        # seg[bg_mask] = 0
 
         # TODO restrict merges to segments that actually touch at the overlap surface ??
         # run segmenter to get the node assignment
         n_labels = int(seg.max()) + 1
-        merged_nodes = segmenter(seg, affs, n_labels)
+        merged_nodes = segmenter(seg, affs, n_labels, glia=glia)
 
         if merged_nodes.size > 0:
             node_assignments.append(merged_nodes)
@@ -90,10 +95,13 @@ def stitch_block_with_neighbors(ds_seg, ds_affs,
 
 def get_merged_nodes(uv_ids, node_labels):
     merge_edges = node_labels[uv_ids[:, 0]] == node_labels[uv_ids[:, 1]]
-    return uv_ids[merge_edges]
+    merge_nodes = uv_ids[merge_edges]
+    # for some reasons that may still happen, although zero should be masked
+    valid_merges = (merge_nodes != 0).all(axis=1)
+    return merge_nodes[valid_merges]
 
 
-def compute_mc_nodes(ws, affs, n_labels, offsets):
+def compute_mc_nodes(ws, affs, n_labels, offsets, glia=None):
     rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
     probs = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)[:, 0]
     uv_ids = rag.uvIds()
@@ -101,7 +109,7 @@ def compute_mc_nodes(ws, affs, n_labels, offsets):
     mc = cseg.Multicut('kernighan-lin', weight_edges=False)
     costs = mc.probabilities_to_costs(probs)
     ignore_edges = (uv_ids == 0).any(axis=1)
-    costs[ignore_edges] = 5 * costs.min()
+    costs[ignore_edges] = - 100
 
     # run multicut
     graph = nifty.graph.undirectedGraph(n_labels)
@@ -112,16 +120,45 @@ def compute_mc_nodes(ws, affs, n_labels, offsets):
     return get_merged_nodes(uv_ids, node_labels)
 
 
-def compute_mcrf_nodes(ws, affs, n_labels, offsets, rf):
+def glia_features(rag, seg, glia):
+    uv_ids = rag.uvIds()
+    # FIXME for some reason 'Quantiles' are not working
+    statistics = ["Mean", "Variance", "Skewness", "Kurtosis",
+                  "Minimum", "Maximum", "Count", "RegionRadii"]
+    extractor = vigra.analysis.extractRegionFeatures(glia, seg.astype('uint32'),
+                                                     features=statistics)
+
+    node_features = np.concatenate([extractor[stat_name][:, None].astype('float32')
+                                    if extractor[stat_name].ndim == 1
+                                    else extractor[stat_name].astype('float32')
+                                    for stat_name in statistics],
+                                   axis=1)
+    fU = node_features[uv_ids[:, 0], :]
+    fV = node_features[uv_ids[:, 1], :]
+
+    edge_features = [np.minimum(fU, fV),
+                     np.maximum(fU, fV),
+                     np.abs(fU - fV),
+                     fU + fV]
+    edge_features = np.concatenate(edge_features, axis=1)
+    return np.nan_to_num(edge_features)
+
+
+def compute_mcrf_nodes(ws, affs, n_labels, offsets, glia, rf):
     rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
-    feats = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)
+    # TODO split features over different affinity ranges ?
+    feats = np.concatenate([nrag.accumulateAffinityStandartFeatures(rag,
+                                                                    affs,
+                                                                    offsets,
+                                                                    numberOfThreads=1),
+                            glia_features(rag, ws, glia)], axis=1)
     probs = rf.predict_proba(feats)[:, 1]
     uv_ids = rag.uvIds()
 
     mc = cseg.Multicut('kernighan-lin', weight_edges=False)
     costs = mc.probabilities_to_costs(probs)
     ignore_edges = (uv_ids == 0).any(axis=1)
-    costs[ignore_edges] = 5 * costs.min()
+    costs[ignore_edges] = -100
 
     # run multicut
     graph = nifty.graph.undirectedGraph(n_labels)
@@ -146,7 +183,7 @@ def stitch_blocks(path, out_key, cache_folder, job_id, block_shape, halo, rf_pat
     offset_file = os.path.join(cache_folder, 'block_offsets.json')
     with open(offset_file, 'r') as f:
         offsets_dict = json.load(f)
-        block_offsets = offsets_dict['offsets']
+        # block_offsets = offsets_dict['offsets']
         empty_blocks = offsets_dict['empty_blocks']
         max_label = offsets_dict['n_labels'] - 1
 
@@ -169,7 +206,8 @@ def stitch_blocks(path, out_key, cache_folder, job_id, block_shape, halo, rf_pat
 
     # find the node assignmemnts by running the segmenter on the (segmentation) overlaps
     results = [stitch_block_with_neighbors(ds_seg, ds_affs, blocking, block_id,
-                                           halo, segmenter, block_offsets, empty_blocks)
+                                           halo, segmenter, empty_blocks)
+                                           # halo, segmenter, block_offsets, empty_blocks)
                for block_id in block_list if block_id not in empty_blocks]
 
     assignments = [res[0] for res in results if res[0] is not None]

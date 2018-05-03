@@ -8,29 +8,31 @@ import numpy as np
 import nifty
 
 
-# def write_block(block_id, blocking, ds, ds_out, node_labels, offsets):
-def write_block(block_id, blocking, ds, ds_out, node_labels):
-    # off = offsets[block_id]
+def write_block(block_id, blocking, ds, offsets):
+    off = offsets[block_id]
+
     block = blocking.getBlock(block_id)
     bb = tuple(slice(beg, end) for beg, end in zip(block.begin, block.end))
     seg = ds[bb]
+
     mask = seg != 0
+
     # don't write empty blocks
     if np.sum(mask) == 0:
+        # print("skipping write", block_id)
         return
-    # seg[mask] += off
-    seg = nifty.tools.take(node_labels, seg)
-    ds_out[bb] = seg
+
+    seg[mask] += off
+    ds[bb] = seg
 
 
-def write_blocks(path, out_key, cache_folder, job_id, block_shape):
+def write_offsets(path, out_key, cache_folder, job_id, block_shape):
 
-    assignment_path = os.path.join(cache_folder, 'node_assignments.npy')
-    node_labels = np.load(assignment_path)
-
-    # offsets_path = os.path.join(cache_folder, 'block_offsets.json')
-    # with open(offsets_path) as f:
-    #     offsets = json.load(f)['offsets']
+    offsets_path = os.path.join(cache_folder, 'block_offsets.json')
+    with open(offsets_path) as f:
+        offset_dict = json.load(f)
+        offsets = offset_dict['offsets']
+        max_label = offset_dict['n_labels'] - 1
 
     input_file = os.path.join(cache_folder, 'block_list_job%i.json' % job_id)
     with open(input_file) as f:
@@ -42,17 +44,14 @@ def write_blocks(path, out_key, cache_folder, job_id, block_shape):
                                     blockShape=list(block_shape))
 
     f = z5py.File(path)
-    ds = f[out_key + '_blocked']
-    ds_out = f[out_key]
+    ds = f[out_key]
 
-    [write_block(block_id, blocking, ds, ds_out, node_labels)  # , offsets)
+    [write_block(block_id, blocking, ds, offsets)
      for block_id in block_list]
 
     # write out the max-label with job 0
     if job_id == 0:
-        with open(os.path.join(cache_folder, 'max_label.json')) as f:
-            max_label = json.load(f)['max_label']
-        ds_out.attrs['maxId'] = max_label
+        ds.attrs['maxId'] = max_label
 
     print("Success")
 
@@ -66,6 +65,6 @@ if __name__ == '__main__':
     parser.add_argument('--block_shape', type=int, nargs=3)
 
     args = parser.parse_args()
-    write_blocks(args.path, args.out_key,
-                 args.cache_folder, args.job_id,
-                 tuple(args.block_shape))
+    write_offsets(args.path, args.out_key,
+                  args.cache_folder, args.job_id,
+                  tuple(args.block_shape))

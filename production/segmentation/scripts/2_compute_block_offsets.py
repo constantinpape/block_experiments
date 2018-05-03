@@ -13,9 +13,12 @@ def compute_block_offsets(cache_folder, n_jobs):
         with open(offset_file) as f:
             offset_dict.update(json.load(f))
 
-    block_ids = list(offset_dict.keys())
+    # json turns all keys to str, which messes up sorting
+    # hence, we need to transform to int before sorting and then cast
+    # back to str when reading from the dict
+    block_ids = list(map(int, offset_dict.keys()))
     block_ids.sort()
-    offsets = np.array([offset_dict[block_id] for block_id in block_ids], dtype='uint64')
+    offsets = np.array([offset_dict[str(block_id)] for block_id in block_ids], dtype='uint64')
 
     empty_blocks = np.where(offsets == 0)[0]
 

@@ -52,17 +52,18 @@ def segment_block(path, out_key, blocking, block_id,
         affs = 1. - affs
 
     ws, max_id = fragmenter(affs, mask)
-    # TODO we might want to keep glia as extra channel for rf ?!
-    # if we have glia predictions, remove them
-    if n_channels == 13:
-        affs = affs[:-1]
-    segmentation = segmenter(ws, affs, max_id + 1, block_id=block_id)
+    glia = affs[-1]
+    affs = affs[:-1]
+    segmentation = segmenter(ws, affs, max_id + 1, block_id=block_id, glia=glia)
+
     # for debug purposes
-    segmentation = ws
+    # segmentation = ws
+
     ds_out = f[out_key]
 
     segmentation = segmentation[local_bb].astype('uint64')
-    segmentation, max_id, _ = vigra.analysis.relabelConsecutive(segmentation, start_label=1)
+    segmentation, max_id, _ = vigra.analysis.relabelConsecutive(segmentation, start_label=1,
+                                                                keep_zeros=False)
     mask = mask[local_bb]
     ignore_mask = np.logical_not(mask)
     segmentation[ignore_mask] = 0
@@ -72,7 +73,7 @@ def segment_block(path, out_key, blocking, block_id,
     return max_id, time.time() - t0
 
 
-def compute_wslr_fragments(affs, mask, channel_weights=None, thresh=0.05):
+def compute_wslr_fragments(affs, mask, channel_weights=None, thresh=0.025):
     wsfu = cseg.LRAffinityWatershed(channel_weights=channel_weights,
                                     threshold_cc=thresh, threshold_dt=0.3,
                                     sigma_seeds=1.6, size_filter=15)
@@ -80,7 +81,7 @@ def compute_wslr_fragments(affs, mask, channel_weights=None, thresh=0.05):
 
 
 # TODO features only based on neareast affinities ?
-def compute_mc_segments(ws, affs, n_labels, offsets, block_id):
+def compute_mc_segments(ws, affs, n_labels, offsets, block_id, glia=None):
     rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
     uv_ids = rag.uvIds()
 
@@ -88,7 +89,7 @@ def compute_mc_segments(ws, affs, n_labels, offsets, block_id):
     # resulting in 0 edges
     if(uv_ids.shape[0] == 0):
         print("WARNING:, block", block_id, "contains only a single id, but is not masked")
-        print("This is may be caused by an incorrect mask")
+        print("This may be caused by an incorrect mask")
         return ws
 
     probs = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)[:, 0]
@@ -105,8 +106,32 @@ def compute_mc_segments(ws, affs, n_labels, offsets, block_id):
     return nrag.projectScalarNodeDataToPixels(rag, node_labels)
 
 
+def glia_features(rag, seg, glia):
+    uv_ids = rag.uvIds()
+    # FIXME for some reason 'Quantiles' are not working
+    statistics = ["Mean", "Variance", "Skewness", "Kurtosis",
+                  "Minimum", "Maximum", "Count", "RegionRadii"]
+    extractor = vigra.analysis.extractRegionFeatures(glia, seg.astype('uint32'),
+                                                     features=statistics)
+
+    node_features = np.concatenate([extractor[stat_name][:, None].astype('float32')
+                                    if extractor[stat_name].ndim == 1
+                                    else extractor[stat_name].astype('float32')
+                                    for stat_name in statistics],
+                                   axis=1)
+    fU = node_features[uv_ids[:, 0], :]
+    fV = node_features[uv_ids[:, 1], :]
+
+    edge_features = [np.minimum(fU, fV),
+                     np.maximum(fU, fV),
+                     np.abs(fU - fV),
+                     fU + fV]
+    edge_features = np.concatenate(edge_features, axis=1)
+    return np.nan_to_num(edge_features)
+
+
 # TODO features only based on neareast affinities ?
-def compute_mcrf_segments(ws, affs, n_labels, offsets, rf, block_id):
+def compute_mcrf_segments(ws, affs, n_labels, glia, offsets, rf, block_id):
     rag = nrag.gridRag(ws, numberOfLabels=int(n_labels), numberOfThreads=1)
     uv_ids = rag.uvIds()
 
@@ -117,7 +142,12 @@ def compute_mcrf_segments(ws, affs, n_labels, offsets, rf, block_id):
         print("This is may be caused by an incorrect mask")
         return ws
 
-    feats = nrag.accumulateAffinityStandartFeatures(rag, affs, offsets, numberOfThreads=1)
+    # TODO split features over different affinity ranges ?
+    feats = np.concatenate([nrag.accumulateAffinityStandartFeatures(rag,
+                                                                    affs,
+                                                                    offsets,
+                                                                    numberOfThreads=1),
+                            glia_features(rag, ws, glia)], axis=1)
     probs = rf.predict_proba(feats)[:, 1]
 
     mc = cseg.Multicut('kernighan-lin', weight_edges=False)
@@ -142,7 +172,8 @@ def process_block_list(path, out_key, cache_folder, job_id, block_shape, halo, r
                                     roiEnd=list(shape),
                                     blockShape=list(block_shape))
 
-    fragmenter = compute_wslr_fragments
+    fragmenter = partial(compute_wslr_fragments,
+                         channel_weights=12*[1] + [2])
 
     offsets = [[-1, 0, 0], [0, -1, 0], [0, 0, -1],
                [-2, 0, 0], [0, -3, 0], [0, 0, -3],
@@ -160,15 +191,15 @@ def process_block_list(path, out_key, cache_folder, job_id, block_shape, halo, r
                              halo, fragmenter, segmenter)
                for block_id in block_list]
 
-    max_ids = [res[0] for res in results]
+    max_ids = [int(res[0]) for res in results]
     res_file = os.path.join(cache_folder, 'block_offsets_job%i.json' % job_id)
     with open(res_file, 'w') as f:
         json.dump({block_id: max_id for block_id, max_id in zip(block_list, max_ids)}, f)
 
-    times = [res[1] for res in results]
     print("Success")
-    for block_index, tproc in enumerate(times):
-        print("Processed block", block_list[block_index], "in", tproc)
+    # times = [res[1] for res in results]
+    # for block_index, tproc in enumerate(times):
+    #     print("Processed block", block_list[block_index], "in", tproc)
 
 
 if __name__ == '__main__':
