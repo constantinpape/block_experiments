@@ -118,12 +118,39 @@ def save_skeletons(block_id, skeletons, skeleton_postfix=''):
             g.attrs['name'] = values['name']
 
 
-def view_skeletons(block_id):
+def view_skeletons(block_id, skeleton_postfix=''):
     import z5py
     from cremi_tools.viewer.volumina import view
     from cremi_tools.skeletons import visualize_skeletons
 
-    skeletons = extract_skeletons(block_id)
+    # skeletons = extract_skeletons(block_id)
+    skel_path = '/home/papec/mnt/nrs/lauritzen/0%i/workspace.n5/skeletons' % block_id
+    assert os.path.exists(skel_path), skel_path
+
+    f_skel = z5py.File(skel_path)
+    # if we don't have the post-fix, these are
+    # the initial neurons of interest
+    if skeleton_postfix == '':
+        fg = f_skel['neurons_of_interest']
+    # otherwise, thse are for evaluation
+    else:
+        fg = f_skel['for_eval_%s' % skeleton_postfix]
+
+    print("Loading skeletons...")
+    skeletons = {}
+    for skel_id in fg.keys():
+        if not skel_id.isdigit():
+            continue
+        g = fg[skel_id]
+        coords = g['coordinates'][:]
+        node_ids = coords[:, 0]
+        coords = coords[:, 1:]
+        edges = g['edges'][:]
+        skeletons[int(skel_id)] = {'coordinates': coords.astype('uint64'),
+                                   'node_ids': node_ids,
+                                   'edges': edges}
+    print("... done")
+
     path = '/home/papec/mnt/nrs/lauritzen/0%i/workspace.n5' % block_id
     f = z5py.File(path)
     ds = f['filtered/gray']
@@ -133,9 +160,11 @@ def view_skeletons(block_id):
     offset = (100, 1000, 1000)
     bb = tuple(slice(c - off, c + off) for c, off in zip(central, offset))
 
+    print("Visualizing skeletons ...")
     bb_shape = tuple(b.stop - b.start for b in bb)
     skeletons = intersect_skeletons_with_bb(skeletons, bb)
     skeleton_vol = visualize_skeletons(bb_shape, skeletons)
+    print("... done")
 
     print("Have skeletons, loading raw from bb", bb)
     raw = ds[bb]
@@ -181,3 +210,6 @@ if __name__ == '__main__':
     print("Saving to n5 ...")
     save_skeletons(block_id, skeletons, skeleton_postfix)
     print("... done")
+
+    # skeleton_postfix = '20180508'
+    # view_skeletons(2, skeleton_postfix)
