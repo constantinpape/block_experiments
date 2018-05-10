@@ -34,23 +34,30 @@ def intersect_skeletons_with_bb(skeletons, bb):
     return intersecting_skeletons
 
 
-def extract_skeletons(block_id):
+def extract_skeletons(block_id, skeleton_postfix='', with_names=False):
     from cremi_tools.skeletons import SkeletonParserCSV
     # path = '/home/papec/mnt/nrs/lauritzen/0%i/workspace.n5/skeletons/skeletons-0%i.csv' % (block_id, block_id)
-    path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/skeletons/skeletons-0%i.csv' % (block_id, block_id)
-    assert os.path.exists(path)
+    if skeleton_postfix == '':
+        path = '/nrs/saalfeld/lauritzen/0%i/skeletons.csv' % block_id
+    else:
+        path = '/nrs/saalfeld/lauritzen/0%i/skeletons-%s.csv' % (block_id, skeleton_postfix)
+    assert os.path.exists(path), path
     # TODO correct resolution and offsets ?!
     resolution = (4, 4, 40)
     offsets = (0, 0, 0)
+
+    # TODO this part should go into cremi_tools.skeletons
     parser = SkeletonParserCSV(resolution=resolution,
                                offsets=offsets,
-                               invert_coordinates=True)
+                               invert_coordinates=True,
+                               have_name_column=with_names)
     skeleton_dict = parser.parse(path)
     skel_ids = np.array(skeleton_dict['skeleton_ids'], dtype='uint64')
     node_ids = np.array(skeleton_dict['node_ids'], dtype='uint64')
     parents = np.array(skeleton_dict['parents'], dtype='int64')
     coords = np.array(skeleton_dict['coordinates'], dtype='int64')
-    names = skeleton_dict['names']
+    if with_names:
+        names = skeleton_dict['names']
     assert (coords >= 0).all()
 
     # seperate by individual neurons
@@ -61,7 +68,8 @@ def extract_skeletons(block_id):
         sk_mask = skel_ids == skid
 
         extracted['coordinates'] = coords[sk_mask]
-        extracted['name'] = names[skid]
+        if with_names:
+            extracted['name'] = names[skid]
 
         nodes = node_ids[sk_mask]
         parents = node_ids[sk_mask]
@@ -74,16 +82,23 @@ def extract_skeletons(block_id):
     return extracted_skeletons
 
 
-# TODO serialize the skeletons properly to n5
-def save_skeletons(block_id):
+# serialize the skeletons properly to n5
+def save_skeletons(block_id, skeletons, skeleton_postfix=''):
     import z5py
     # path = '/home/papec/mnt/nrs/lauritzen/0%i/workspace.n5/skeletons' % block_id
     path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/skeletons' % block_id
-    f = z5py.File(path)
 
-    skeletons = extract_skeletons(block_id)
+    f = z5py.File(path)
+    # if we don't have the post-fix, these are
+    # the initial neurons of interest
+    if skeleton_postfix == '':
+        fg = f.create_group('neurons_of_interest')
+    # otherwise, thse are for evaluation
+    else:
+        fg = f.create_group('for_eval_%s' % skeleton_postfix)
+
     for skel_id, values in skeletons.items():
-        g = f.create_group(str(skel_id))
+        g = fg.create_group(str(skel_id))
         # we prepend the nodes to the coordinates
         nodes = values['node_ids']
         coords = values['coordinates']
@@ -98,8 +113,9 @@ def save_skeletons(block_id):
                                chunks=edges.shape, dtype='int64',
                                compression='raw')
         dse[:] = edges.astype('int64')
-        # save the name as attribute
-        g.attrs['name'] = values['name']
+        # save the name as attribute if present
+        if 'name' in values:
+            g.attrs['name'] = values['name']
 
 
 def view_skeletons(block_id):
@@ -126,6 +142,42 @@ def view_skeletons(block_id):
     view([raw, skeleton_vol])
 
 
+def get_gt_roi(gt_id):
+    resolution = (40., 4., 4.)
+    padded_offset = ((12000., 2608., 9172.),
+                     (0., 8076., 7056.),
+                     (8000., 4308., 4708.))
+    offset_in_padded = (1480.0, 3644.0, 3644.0)
+
+    offset = tuple(int((pad_off + off) // res)
+                   for pad_off, off, res in zip(padded_offset[gt_id],
+                                                offset_in_padded,
+                                                resolution))
+
+    shape = (125, 1250, 1250)
+    return offset, tuple(off + sh
+                         for off, sh in zip(offset, shape))
+
+
 if __name__ == '__main__':
-    # view_skeletons(2)
-    save_skeletons(2)
+    from cremi_tools.skeletons import filter_skeletons_in_rois
+
+    block_id = 2
+    skeleton_postfix = '20180508'
+    with_name = False
+    print("Extracting skeletons from csv...")
+    skeletons = extract_skeletons(block_id, skeleton_postfix, with_name)
+    print("... done")
+
+    # we filter the skeletons for the regions where we have training
+    # data in block 2
+    if block_id == 2:
+        print("Filtering skeleton locations ...")
+        # regions of the new groudntruh block rois for block 2
+        roi_list = [get_gt_roi(gt_id) for gt_id in range(3)]
+        skeletons = filter_skeletons_in_rois(skeletons, roi_list)
+        print("... done")
+
+    print("Saving to n5 ...")
+    save_skeletons(block_id, skeletons, skeleton_postfix)
+    print("... done")
