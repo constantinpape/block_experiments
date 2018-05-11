@@ -72,9 +72,9 @@ def extract_skeletons(block_id, skeleton_postfix='', with_names=False):
             extracted['name'] = names[skid]
 
         nodes = node_ids[sk_mask]
-        parents = node_ids[sk_mask]
+        parent_nodes = parents[sk_mask]
         edges = np.concatenate([nodes[:, None].astype('int64'),
-                                parents[:, None]], axis=1)
+                                parent_nodes[:, None]], axis=1)
         extracted['node_ids'] = nodes
         extracted['edges'] = edges
 
