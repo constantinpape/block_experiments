@@ -35,7 +35,7 @@ def intersect_skeletons_with_bb(skeletons, bb):
 
 
 def extract_skeletons(block_id, skeleton_postfix='', with_names=False):
-    from cremi_tools.skeletons import SkeletonParserCSV
+    from cremi_tools.skeletons import SkeletonParserCSV, skeletons_from_csv_to_n5_format
     # path = '/home/papec/mnt/nrs/lauritzen/0%i/workspace.n5/skeletons/skeletons-0%i.csv' % (block_id, block_id)
     if skeleton_postfix == '':
         path = '/nrs/saalfeld/lauritzen/0%i/skeletons.csv' % block_id
@@ -46,76 +46,20 @@ def extract_skeletons(block_id, skeleton_postfix='', with_names=False):
     resolution = (4, 4, 40)
     offsets = (0, 0, 0)
 
-    # TODO this part should go into cremi_tools.skeletons
     parser = SkeletonParserCSV(resolution=resolution,
                                offsets=offsets,
                                invert_coordinates=True,
                                have_name_column=with_names)
-    skeleton_dict = parser.parse(path)
-    skel_ids = np.array(skeleton_dict['skeleton_ids'], dtype='uint64')
-    node_ids = np.array(skeleton_dict['node_ids'], dtype='uint64')
-    parents = np.array(skeleton_dict['parents'], dtype='int64')
-    coords = np.array(skeleton_dict['coordinates'], dtype='int64')
-    if with_names:
-        names = skeleton_dict['names']
-    assert (coords >= 0).all()
-
-    # seperate by individual neurons
-    extracted_skeletons = {}
-    unique_ids = np.unique(skel_ids)
-    for skid in unique_ids:
-        extracted = {}
-        sk_mask = skel_ids == skid
-
-        extracted['coordinates'] = coords[sk_mask]
-        if with_names:
-            extracted['name'] = names[skid]
-
-        nodes = node_ids[sk_mask]
-        parent_nodes = parents[sk_mask]
-        edges = np.concatenate([nodes[:, None].astype('int64'),
-                                parent_nodes[:, None]], axis=1)
-        extracted['node_ids'] = nodes
-        extracted['edges'] = edges
-
-        extracted_skeletons[skid] = extracted
-    return extracted_skeletons
+    return skeletons_from_csv_to_n5_format(parser, path)
 
 
 # serialize the skeletons properly to n5
 def save_skeletons(block_id, skeletons, skeleton_postfix=''):
-    import z5py
+    from cremi_tools.skeletons import save_skeletons as save_n5_skeletons
     # path = '/home/papec/mnt/nrs/lauritzen/0%i/workspace.n5/skeletons' % block_id
     path = '/nrs/saalfeld/lauritzen/0%i/workspace.n5/skeletons' % block_id
-
-    f = z5py.File(path)
-    # if we don't have the post-fix, these are
-    # the initial neurons of interest
-    if skeleton_postfix == '':
-        fg = f.create_group('neurons_of_interest')
-    # otherwise, thse are for evaluation
-    else:
-        fg = f.create_group('for_eval_%s' % skeleton_postfix)
-
-    for skel_id, values in skeletons.items():
-        g = fg.create_group(str(skel_id))
-        # we prepend the nodes to the coordinates
-        nodes = values['node_ids']
-        coords = values['coordinates']
-        coords = np.concatenate([nodes[:, None], coords], axis=1)
-        dsc = g.create_dataset('coordinates', shape=coords.shape,
-                               chunks=coords.shape, dtype='uint64',
-                               compression='raw')
-        dsc[:] = coords.astype('uint64')
-        # save the edges
-        edges = values['edges']
-        dse = g.create_dataset('edges', shape=edges.shape,
-                               chunks=edges.shape, dtype='int64',
-                               compression='raw')
-        dse[:] = edges.astype('int64')
-        # save the name as attribute if present
-        if 'name' in values:
-            g.attrs['name'] = values['name']
+    group = 'neurons_of_interest' if skeleton_postfix == '' else 'for_eval_%s' % skeleton_postfix
+    save_n5_skeletons(path, group, skeletons)
 
 
 def view_skeletons(block_id, skeleton_postfix=''):
